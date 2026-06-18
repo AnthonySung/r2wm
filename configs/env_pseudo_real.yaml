@@ -1,0 +1,52 @@
+# PseudoReal 环境配置
+# 用于 Stage 2 数据采集 + 最终评估
+# 模拟"真机":标称物理 + 简化观测
+
+env_name: a1_amp
+
+# Isaac Gym 并行(较小,模拟真机)
+num_envs: 64
+device: cuda:0
+headless: true
+
+# 物理参数(关键:标称,无随机化,代表"真机")
+domain_rand:
+  # 全部关闭,代表理想物理
+  motor_strength_range: [1.0, 1.0]    # 标称
+  kp_range: [20.0, 20.0]              # 标称
+  kd_range: [0.5, 0.5]                # 标称
+  added_mass_range: [0.0, 0.0]        # 无额外负载
+  friction_range: [1.0, 1.0]          # 标称
+  push_robots: false                  # 无外力推
+  push_interval_s: null
+  push_force: null
+
+# 地形(**与 InaccurateSim 一致!**)
+terrain:
+  mesh_type: trimesh
+  curriculum: false
+  measure_heights: false    # ← 关键:不测 heightmap(真机测不了)
+  horizontal_scale: 0.1
+  vertical_scale: 0.005
+
+# Episode 设置
+episode_length: 1000
+
+# 观测配置(**关键:仅 45 维本体感知**)
+obs:
+  use_heightmap: false     # ← 关键:不使用 heightmap
+  use_privileged: false    # ← 关键:不使用 privileged info
+  obs_dim: 45              # ← 关键:只输出 45 维 proprio
+  obs_scales:
+    lin_vel: 2.0
+    ang_vel: 0.25
+    dof_pos: 1.0
+    dof_vel: 0.05
+
+# 控制参数(与 InaccurateSim 一致)
+control:
+  control_type: 'P'
+  stiffness: {joint: 20.0}
+  damping: {joint: 0.5}
+  action_scale: 0.25
+  decimation: 4

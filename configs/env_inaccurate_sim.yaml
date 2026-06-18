@@ -1,0 +1,55 @@
+# InaccurateSim 环境配置
+# 用于 Stage 1 训练:模拟 sim-to-real gap
+
+env_name: a1_amp
+
+# Isaac Gym 并行
+num_envs: 4096
+device: cuda:0
+headless: true
+
+# 物理参数(关键:域随机化)
+domain_rand:
+  # 电机扭矩随机(ReDRAW 做法:降 30%)
+  motor_strength_range: [0.65, 0.75]
+  # PD 增益随机
+  kp_range: [14, 18]
+  kd_range: [0.3, 0.5]
+  # 额外负载
+  added_mass_range: [1.0, 3.0]
+  # 摩擦随机
+  friction_range: [0.3, 1.5]
+  # 周期性推力(模拟外部扰动)
+  push_robots: true
+  push_interval_s: [3, 8]
+  push_force: [10, 30]
+
+# 地形(与 PseudoReal 一致!)
+terrain:
+  mesh_type: trimesh
+  curriculum: false        # 不 curriculum
+  measure_heights: true
+  # 简单地形(平地为主,少量起伏)
+  horizontal_scale: 0.1
+  vertical_scale: 0.005
+
+# Episode 设置
+episode_length: 1000       # 1000 步 = 20s(假设 dt=0.02s)
+
+# 观测配置
+obs:
+  use_heightmap: true      # Stage 1 用完整观测(235 维)
+  obs_scales:
+    lin_vel: 2.0
+    ang_vel: 0.25
+    dof_pos: 1.0
+    dof_vel: 0.05
+    height_measurements: 5.0
+
+# 控制参数
+control:
+  control_type: 'P'
+  stiffness: {joint: 20.0}
+  damping: {joint: 0.5}
+  action_scale: 0.25
+  decimation: 4

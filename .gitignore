@@ -1,0 +1,84 @@
+# ========================================
+# r2wmp .gitignore
+# ========================================
+
+# ==================== Python ====================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.egg-info/
+
+# 虚拟环境
+venv/
+env/
+.venv/
+
+# 测试覆盖率
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ==================== Isaac Gym ====================
+isaacgym*/
+*.pth
+
+# ==================== PyTorch ====================
+*.pt
+*.pth.tar
+
+# ==================== 训练产物 ====================
+# Checkpoints(模型权重,通常很大)
+checkpoints/
+*.ckpt
+
+# 训练数据
+datasets/
+
+# 训练日志
+logs/
+*.log
+
+# 评估结果(可选择性保留 results/comparison.json)
+results/*.png
+
+# ==================== 系统文件 ====================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==================== 编辑器 ====================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+
+# ==================== 临时文件 ====================
+*.tmp
+*.bak
+*.swp
+.cache/
+.pytest_cache/
+
+# ==================== 项目特定 ====================
+# WMP 路径(可选,如果你想引用)
+# WMP_ROOT=
+
+# Claude Code 评审输入(包含代码内容)
+docs/claude_review_input.txt
+
+# 临时测试文件
+*.npz.bak
+test_buffer.npz
