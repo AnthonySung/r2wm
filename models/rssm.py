@@ -251,6 +251,7 @@ class RSSM(nn.Module):
             init = self.initial_state(prev_state['deter'].shape[0], device=prev_state['deter'].device)
             # is_first_expanded 必须广播到每个 tensor 的所有维度
             # prev_state['stoch'] 是 [B, 8, 8],需要 [B, 1, 1]
+            # 只对 init 中存在的 key 做 reset(其他 key 如 logit 只在 obs_step 输出)
             prev_state = {
                 k: torch.where(
                     is_first.view(-1, *([1] * (v.dim() - 1))),
@@ -258,6 +259,7 @@ class RSSM(nn.Module):
                     v,
                 )
                 for k, v in prev_state.items()
+                if k in init
             }
             if prev_action is not None:
                 prev_action = torch.where(
