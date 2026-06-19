@@ -17,26 +17,26 @@ def compute_lambda_return(
     计算 λ-return。
 
     Args:
-        rewards: [T, B]
-        values: [T+1, B]  (values[T] 是 bootstrap)
-        continues: [T, B]
+        rewards: [B, T]
+        values: [B, T+1]  (values[:, T] 是 bootstrap)
+        continues: [B, T]
         lambda_: λ 系数
         gamma: γ 系数
     Returns:
-        lambda_returns: [T, B]
+        lambda_returns: [B, T]
     """
-    T = rewards.shape[0]
+    T = rewards.shape[1]
     lambda_returns = torch.zeros_like(rewards)
 
     # 从后往前计算
-    next_return = values[-1]  # bootstrap value
+    next_return = values[:, -1]  # bootstrap value
     for t in reversed(range(T)):
         # λ-return: r_t + γ * c_t * ((1-λ) * V(s_{t+1}) + λ * G_{t+1})
-        next_values = values[t + 1] if t + 1 < T else values[t]
-        lambda_returns[t] = rewards[t] + gamma * continues[t] * (
+        next_values = values[:, t + 1] if t + 1 < T else values[:, t]
+        lambda_returns[:, t] = rewards[:, t] + gamma * continues[:, t] * (
             (1 - lambda_) * next_values + lambda_ * next_return
         )
-        next_return = lambda_returns[t]
+        next_return = lambda_returns[:, t]
 
     return lambda_returns
 
@@ -105,34 +105,40 @@ def compute_ac_loss(
     # values
     feat_seq = world_model.rssm.get_feat(states)  # [B, horizon, feat_dim]
     feat_seq_t = feat_seq.transpose(0, 1)  # [horizon, B, feat_dim]
-    values_seq = critic(feat_seq.reshape(-1, feat_seq.shape[-1])).reshape(horizon, -1)
+    values_flat = critic(feat_seq.reshape(-1, feat_seq.shape[-1]))  # [B*horizon]
+    values_seq = values_flat.reshape(feat_seq.shape[0], feat_seq.shape[1]).transpose(0, 1)  # [horizon, B]
 
     # bootstrap value
     bootstrap_feat = world_model.rssm.get_feat(states)[:, -1]  # [B, feat_dim]
     bootstrap_value = target_critic(bootstrap_feat)  # [B]
 
     # 拼接 bootstrap value
-    values_with_bootstrap = torch.cat([values_seq, bootstrap_value.unsqueeze(0)], dim=0)
+    # 统一 shape 为 [B, horizon]
+    # values_seq: [horizon, B] → [B, horizon]
+    values_with_bootstrap = torch.cat([values_seq, bootstrap_value.unsqueeze(0)], dim=0)  # [horizon+1, B]
+    values_bt = values_with_bootstrap.transpose(0, 1)  # [B, horizon+1]
+    imag_rewards_bt = imag_rewards  # [B, T] 直接是 [B, T]
+    imag_continues_bt = imag_continues  # [B, T]
 
     # 4. λ-return
     lambda_returns = compute_lambda_return(
-        imag_rewards.transpose(0, 1),  # [B, horizon] -> [horizon, B] by transpose
-        values_with_bootstrap,  # [horizon+1, B]
-        imag_continues.transpose(0, 1),
+        imag_rewards_bt,  # [B, horizon]
+        values_bt,         # [B, horizon+1]
+        imag_continues_bt, # [B, horizon]
         lambda_=lambda_,
         gamma=gamma,
-    )  # [horizon, B]
-
-    lambda_returns = lambda_returns.transpose(0, 1)  # [B, horizon]
+    )  # [B, horizon]
 
     # 5. Actor loss
+    # discount shape: [B, horizon]
+    # lambda_returns shape: [B, horizon]
     discount = torch.cumprod(
         torch.cat([
-            torch.ones_like(imag_continues[:, :1].transpose(0, 1)),  # [1, B]
-            gamma * imag_continues.transpose(0, 1)[:-1],  # [horizon-1, B]
-        ], dim=0),
-        dim=0,
-    )  # [horizon, B]
+            torch.ones_like(imag_continues[:, :1]),  # [B, 1]
+            gamma * imag_continues[:, :-1],  # [B, horizon-1]
+        ], dim=-1),
+        dim=-1,
+    )  # [B, horizon]
 
     actor_obj = (lambda_returns * discount).mean(dim=0)  # [B]
     actor_loss = -actor_obj.mean()
@@ -140,12 +146,14 @@ def compute_ac_loss(
     # entropy bonus
     entropy_loss = -entropies.mean() * entropy_scale
 
-    # 6. Critic loss
+    # 6. Critic loss(统一维度)
+    # values_seq: [horizon, B] → 转置成 [B, horizon]
+    # lambda_returns: [B, horizon]
+    values_seq_bt = values_seq.transpose(0, 1).contiguous()
     critic_loss = F.mse_loss(
-        values_seq,  # [horizon, B]
-        lambda_returns.detach(),  # [horizon, B]
+        values_seq_bt,
+        lambda_returns.detach(),
     )
-
     # Total
     total_loss = actor_loss + critic_loss + entropy_loss
 

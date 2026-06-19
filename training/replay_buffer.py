@@ -122,7 +122,7 @@ class ReplayBuffer:
             next_obs_batch[i] = self._next_obs[start:end]
             done_batch[i] = self._done[start:end]
             # 从 buffer 直接读取 is_first
-            is_first_batch[i] = self._is_first[start:end].astype(np.bool_)
+            is_first_batch[i] = (self._is_first[start:end] > 0.5)
 
         # 转 tensor
         return {

@@ -6,6 +6,8 @@ RSSM: Recurrent State-Space Model(PyTorch 版)
 - Continuous Gaussian latent(可选)
 - GRU-based deter 更新
 - 支持 history(用于 DynamicsResidual)
+
+PyTorch 2.0 兼容(避免 OneHotDist.mode() 的 Tensor 问题)
 """
 
 import torch
@@ -109,7 +111,6 @@ class RSSM(nn.Module):
         # === Initial state ===
         if initial == 'learned':
             self._init_deter = nn.Parameter(torch.zeros(1, deter_dim))
-            # init_stoch 通过 self._imgs_stat_layer 计算
 
         # Uniform weight init(对齐 WMP)
         self._init_weights()
@@ -133,12 +134,12 @@ class RSSM(nn.Module):
         else:  # zeros
             deter = torch.zeros(batch_size, self._deter_dim, device=device)
 
-        # 通过 img_out_layers → imgs_stat_layer 得到初始 stoch
+        # 通过 img_out_layers → imgs_stat_layer 得到初始 stoch(mode)
         stoch = self._compute_stoch_from_deter(deter, sample=False)
 
         return {
             'deter': deter,
-            'stoch': stoch,  # [B, stoch_dim, discrete] 或 [B, stoch_dim]
+            'stoch': stoch,
         }
 
     def _compute_stoch_from_deter(
@@ -147,32 +148,46 @@ class RSSM(nn.Module):
         """从 deter 计算 stoch"""
         x = self._img_out_layers(deter)
         stats = self._suff_stats_layer('ims', x)
-        dist = self._get_dist(stats)
         if sample:
+            dist = self._get_dist(stats)
             stoch = dist.sample()
         else:
-            stoch = dist.mode()
+            # 取 mode 的 argmax(避免 PyTorch 2.0 OneHotDist.mode() 行为差异)
+            stoch = self._stats_to_mode(stats)
         return stoch
 
     def _suff_stats_layer(self, name: str, x: torch.Tensor) -> dict:
-        """计算统计量"""
+        """计算统计量(无 dist_type 字段,避免污染下游)"""
         if self._is_discrete:
             layer = self._imgs_stat_layer if name == 'ims' else self._obs_stat_layer
             logits = layer(x)
             logits = logits.reshape(*logits.shape[:-1], self._stoch_dim, self._discrete)
-            return {'logit': logits, 'dist_type': 'discrete'}
+            return {'logit': logits}
         else:
             layer = self._imgs_stat_layer if name == 'ims' else self._obs_stat_layer
             stats = layer(x)
             mean, std = torch.split(stats, [self._stoch_dim] * 2, dim=-1)
             std = 2 * torch.sigmoid(std / 2) + self._min_std
-            return {'mean': mean, 'std': std, 'dist_type': 'continuous'}
+            return {'mean': mean, 'std': std}
+
+    def _stats_to_mode(self, stats: dict) -> torch.Tensor:
+        """直接取 mode(不通过 dist.mode(),避开 PyTorch 2.0 OneHotDist 行为差异)"""
+        if self._is_discrete:
+            # mode of one-hot = argmax of logits → one-hot
+            idx = stats['logit'].argmax(dim=-1)
+            return F.one_hot(idx, num_classes=self._discrete).float()
+        else:
+            # mode of Normal = mean
+            return stats['mean']
 
     def _get_dist(self, stats: dict):
-        """获取分布"""
-        if stats['dist_type'] == 'discrete':
-            return OneHotDist(logits=stats['logit'], unimix_ratio=self._unimix_ratio)
-        else:
+        """获取分布(用 Independent 包装以支持 KL)"""
+        if 'logit' in stats:  # discrete
+            return torchd.Independent(
+                OneHotDist(logits=stats['logit'], unimix_ratio=self._unimix_ratio),
+                1
+            )
+        else:  # continuous
             return torchd.Independent(
                 torchd.Normal(stats['mean'], stats['std']), 1
             )
@@ -189,14 +204,6 @@ class RSSM(nn.Module):
     ) -> dict:
         """
         Imagination step: 从 prev_state + action 预测下一状态。
-
-        Args:
-            prev_state: dict with 'deter' and 'stoch'
-            prev_action: [..., action_dim]
-            sample: 是否采祥
-
-        Returns:
-            prior: dict with 'deter' and 'stoch'
         """
         prev_stoch = prev_state['stoch']
         prev_deter = prev_state['deter']
@@ -217,14 +224,16 @@ class RSSM(nn.Module):
         # img_out → stats
         h = self._img_out_layers(deter)
         stats = self._suff_stats_layer('ims', h)
-        dist = self._get_dist(stats)
-        stoch = dist.sample() if sample else dist.mode()
+        if sample:
+            dist = self._get_dist(stats)
+            stoch = dist.sample()
+        else:
+            stoch = self._stats_to_mode(stats)
 
-        return {
-            'deter': deter,
-            'stoch': stoch,
-            **stats,  # 包含 'mean', 'std', 'logit' 等
-        }
+        # 合并 stats(无 dist_type 字段)
+        result = {'deter': deter, 'stoch': stoch}
+        result.update(stats)
+        return result
 
     def obs_step(
         self,
@@ -236,17 +245,6 @@ class RSSM(nn.Module):
     ) -> tuple:
         """
         Observation step: 从 embed 推断 posterior。
-
-        Args:
-            prev_state: dict
-            prev_action: [..., action_dim]
-            embed: [..., embed_dim]
-            is_first: [...] bool
-            sample: 是否采祥
-
-        Returns:
-            post: dict with 'deter', 'stoch', 'mean', 'std' or 'logit'
-            prior: dict(同 img_step 的输出)
         """
         # 处理 is_first(重置)
         if is_first is not None and is_first.any():
@@ -270,15 +268,14 @@ class RSSM(nn.Module):
         x = torch.cat([prior['deter'], embed], dim=-1)
         x = self._obs_out_layers(x)
         stats = self._suff_stats_layer('obs', x)
-        dist = self._get_dist(stats)
-        stoch = dist.sample() if sample else dist.mode()
+        if sample:
+            dist = self._get_dist(stats)
+            stoch = dist.sample()
+        else:
+            stoch = self._stats_to_mode(stats)
 
-        post = {
-            'deter': prior['deter'],
-            'stoch': stoch,
-            **stats,
-        }
-
+        post = {'deter': prior['deter'], 'stoch': stoch}
+        post.update(stats)
         return post, prior
 
     # ============================================================
@@ -295,16 +292,16 @@ class RSSM(nn.Module):
     ):
         """
         计算 KL loss(dyn + rep)。
-
         ReDRAW 公式:
-        - dyn_loss = KL(sg(post) || prior)  -- 推动 prior 接近 post
-        - rep_loss = KL(post || sg(prior))  -- 推动 post 接近 prior
-
+        - dyn_loss = KL(sg(post) || prior)
+        - rep_loss = KL(post || sg(prior))
         free bits: KL loss 下界
         """
-        # 停梯度版本(用于 dyn/rep loss)
-        post_sg = {k: v.detach() for k, v in post.items()}
-        prior_sg = {k: v.detach() for k, v in prior.items()}
+        # 停梯度(只对 tensor 字段,跳过 None)
+        post_sg = {k: v.detach() if torch.is_tensor(v) else v
+                   for k, v in post.items() if torch.is_tensor(v)}
+        prior_sg = {k: v.detach() if torch.is_tensor(v) else v
+                    for k, v in prior.items() if torch.is_tensor(v)}
 
         # 当前分布
         post_dist = self._get_dist(post)
@@ -315,21 +312,19 @@ class RSSM(nn.Module):
         prior_dist_sg = self._get_dist(prior_sg)
 
         # dyn_loss = KL(stop_grad(post) || prior)
-        # 推动 prior 接近 post(让先验预测更准)
-        dyn_loss = post_dist_sg.kl_divergence(prior_dist)
+        # PyTorch 2.0 中 Independent 没有 kl_divergence 方法,用函数版本
+        dyn_loss = torchd.kl.kl_divergence(post_dist_sg, prior_dist)
         if free > 0:
             dyn_loss = torch.maximum(dyn_loss, torch.full_like(dyn_loss, free))
         dyn_loss = dyn_loss.sum(dim=-1)  # sum over stoch dims
 
         # rep_loss = KL(post || stop_grad(prior))
-        # 推动 post 接近 prior(让 posterior 不要偏离 prior 太远,避免后验坍塌)
-        rep_loss = post_dist.kl_divergence(prior_dist_sg)
+        rep_loss = torchd.kl.kl_divergence(post_dist, prior_dist_sg)
         if free > 0:
             rep_loss = torch.maximum(rep_loss, torch.full_like(rep_loss, free))
         rep_loss = rep_loss.sum(dim=-1)
 
         total = dyn_scale * dyn_loss.mean() + rep_scale * rep_loss.mean()
-
         return total, dyn_loss.mean(), rep_loss.mean()
 
     # ============================================================
@@ -337,11 +332,7 @@ class RSSM(nn.Module):
     # ============================================================
 
     def get_feat(self, state: dict) -> torch.Tensor:
-        """获取 feature(给 Actor 使用)
-
-        Returns:
-            feat: [..., stoch_dim * discrete + deter_dim]
-        """
+        """获取 feature(给 Actor 使用)"""
         stoch = state['stoch']
         if self._is_discrete:
             stoch_flat = stoch.reshape(*stoch.shape[:-2], self._stoch_flat_dim)
@@ -359,12 +350,8 @@ class RSSM(nn.Module):
 
     def get_deter_history(
         self,
-        state: dict,
         history: torch.Tensor,
         new_deter: torch.Tensor,
     ) -> torch.Tensor:
         """更新 deter history(用于 DynamicsResidual)"""
-        # history: [..., history_len, deter_dim]
-        # new_deter: [..., deter_dim]
-        # 返回新的 history,把 new_deter 放在最后
         return torch.cat([history[..., 1:, :], new_deter.unsqueeze(-2)], dim=-2)

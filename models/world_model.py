@@ -175,8 +175,9 @@ class WorldModel(nn.Module):
             B, self._residual_config['history_len'], self._deter_dim, device=device
         )
 
-        posts = {'stoch': [], 'deter': [], 'mean': [], 'std': []}
-        priors = {'stoch': [], 'deter': [], 'mean': [], 'std': []}
+        # 动态收集 keys(discrete/continuous 不同)
+        posts = {}
+        priors = {}
 
         for t in range(T):
             embed_t = embed_seq[:, t]
@@ -195,16 +196,17 @@ class WorldModel(nn.Module):
                 )
 
             # 更新 deter history
-            deter_history = self.rssm.get_deter_history(
-                deter_history, None, post['deter']
-            )
+            deter_history = self.rssm.get_deter_history(deter_history, post['deter'])
 
-            for key in posts:
-                if key in post:
-                    posts[key].append(post[key])
-            for key in priors:
-                if key in prior:
-                    priors[key].append(prior[key])
+            # 收集所有 key(第一次初始化)
+            for key, val in post.items():
+                if key not in posts:
+                    posts[key] = []
+                posts[key].append(val)
+            for key, val in prior.items():
+                if key not in priors:
+                    priors[key] = []
+                priors[key].append(val)
 
             state = post
 
@@ -254,7 +256,11 @@ class WorldModel(nn.Module):
                 else:
                     prev_stoch_flat = prev_stoch
                 delta_phys = self.physical_residual(prev_stoch_flat, action)
-                new_state['mean'] = new_state['mean'] + delta_phys
+                # 加到 mean 或 logit(取决于分布类型)
+                if 'mean' in new_state:
+                    new_state['mean'] = new_state['mean'] + delta_phys
+                elif 'logit' in new_state:
+                    new_state['logit'] = new_state['logit'] + delta_phys.reshape(new_state['logit'].shape)
 
             states.append(new_state)
             actions.append(action)
@@ -263,10 +269,11 @@ class WorldModel(nn.Module):
             state = new_state
 
         # Stack
+        # 排除 dist_type 等非 tensor 字段(兼容性)
         states_stacked = {
             k: torch.stack([s[k] for s in states], dim=1)
             for k in states[0].keys()
-            if k != 'dist_type'
+            if k != 'dist_type' and torch.is_tensor(states[0][k])
         }
         actions_stacked = torch.stack(actions, dim=1)
         log_probs_stacked = torch.stack(log_probs, dim=1)
@@ -313,8 +320,13 @@ class WorldModel(nn.Module):
 
         # 加到 mean 上(对应 ReDRAW 的 logits + correction)
         # 注意: 这里 'mean' 是 Gaussian mean,等价于 ReDRAW 的 logits
-        post['mean'] = post['mean'] + delta_phys
-        prior['mean'] = prior['mean'] + delta_phys
+        # Discrete 模式下用 'logit'(因为没有 'mean')
+        if 'mean' in post:
+            post['mean'] = post['mean'] + delta_phys
+            prior['mean'] = prior['mean'] + delta_phys
+        elif 'logit' in post:
+            post['logit'] = post['logit'] + delta_phys.reshape(post['logit'].shape)
+            prior['logit'] = prior['logit'] + delta_phys.reshape(prior['logit'].shape)
 
         # DynamicsResidual
         delta_dyn = self.dynamics_residual(deter_history, action)
