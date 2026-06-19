@@ -249,14 +249,19 @@ class RSSM(nn.Module):
         # 处理 is_first(重置)
         if is_first is not None and is_first.any():
             init = self.initial_state(prev_state['deter'].shape[0], device=prev_state['deter'].device)
-            is_first_expanded = is_first.unsqueeze(-1)  # [B, 1]
+            # is_first_expanded 必须广播到每个 tensor 的所有维度
+            # prev_state['stoch'] 是 [B, 8, 8],需要 [B, 1, 1]
             prev_state = {
-                k: torch.where(is_first_expanded, init[k], v)
+                k: torch.where(
+                    is_first.view(-1, *([1] * (v.dim() - 1))),
+                    init[k],
+                    v,
+                )
                 for k, v in prev_state.items()
             }
             if prev_action is not None:
                 prev_action = torch.where(
-                    is_first_expanded,
+                    is_first.unsqueeze(-1),
                     torch.zeros_like(prev_action),
                     prev_action,
                 )
