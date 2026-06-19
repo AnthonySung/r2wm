@@ -68,6 +68,10 @@ class WMPEnvBase(BaseEnv):
         cfg.env.num_envs = num_envs
         cfg.env.episode_length_s = max_episode_steps * 0.02  # 1000 * 0.02 = 20s
 
+        # 关键修复: 禁用 camera(headless + 无显示器必须关)
+        # 否则会 segfault (graphics_device_id 与 sim_device_id 冲突)
+        cfg.depth.use_camera = False
+
         # 配置地形(子类的关键控制点)
         self._configure_terrain(cfg, terrain_config)
 
@@ -107,9 +111,17 @@ class WMPEnvBase(BaseEnv):
         - horizontal_scale: 0.1
         - vertical_scale: 0.005
         - terrain_proportions: [...]
+
+        注意:
+        - 必须用 'trimesh',不能用 'plane'(WMP 的 reward 函数依赖 terrain)
+        - 必须 measure_heights=False(简化 obs,避免 heightmap 处理)
         """
-        # 默认 trimesh
+        # 默认 trimesh(关键:不能用 plane!)
         cfg.terrain.mesh_type = terrain_config.get('mesh_type', 'trimesh')
+        assert cfg.terrain.mesh_type == 'trimesh', (
+            "必须用 trimesh terrain!Plane 会导致 WMP reward 函数报错。"
+        )
+
         cfg.terrain.horizontal_scale = terrain_config.get('horizontal_scale', 0.1)
         cfg.terrain.vertical_scale = terrain_config.get('vertical_scale', 0.005)
         cfg.terrain.measure_heights = terrain_config.get('measure_heights', False)
@@ -168,7 +180,7 @@ class WMPEnvBase(BaseEnv):
         Args:
             action: [num_envs, 12] 范围 [-1, 1]
         Returns:
-            obs: [num_envs, 45] 本体感知
+            obs: [num_envs, 48] 本体感知
             reward: [num_envs]
             done: [num_envs] bool
             info: dict
