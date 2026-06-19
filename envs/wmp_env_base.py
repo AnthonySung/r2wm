@@ -206,7 +206,13 @@ class WMPEnvBase(BaseEnv):
         done = reset_buf.clone()
 
         # Episode 统计
-        self._episode_returns += reward
+        # WMP bug: rew_buf 初始化为 int,bool 加法会变 bool dtype
+        # 这里转 float 避免下游报错
+        reward = reward.float()
+
+        # Episode 统计
+        # WMP 的 reward 可能是 bool(来自 base_terminated 项),需转 float
+        self._episode_returns += reward.float()
         self._episode_lengths += 1
 
         # 自动 reset(detect done)
@@ -224,7 +230,8 @@ class WMPEnvBase(BaseEnv):
             self._episode_returns[done_idx] = 0.0
             self._episode_lengths[done_idx] = 0
 
-        return obs, reward, done, info
+        # 返回时也转 float(避免 mean() 报错)
+        return obs, reward.float(), done, info
 
     def get_proprio_obs(self) -> torch.Tensor:
         """获取当前 proprio obs"""
