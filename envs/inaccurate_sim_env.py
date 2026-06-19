@@ -5,7 +5,7 @@ InaccurateSimEnv: 不准确仿真环境(Stage 1 训练)
 - 电机扭矩: 0.65-0.75(标称 1.0)
 - PD 增益: Kp 14-18(标称 20), Kd 0.3-0.5(标称 0.5)
 - 摩擦: 0.3-1.5
-- 额外质量: +1-3 kg
+- 质量: +1-3 kg
 - 外力推: 周期性
 """
 
@@ -20,7 +20,7 @@ class InaccurateSimEnv(WMPEnvBase):
     用于 Stage 1 训练。配置:
     - num_envs: 4096(并行训练)
     - 域随机化: 启用(模拟 sim-to-real gap)
-    - 观测: 45 维 proprio(从 WMP 235 维 policy_obs 取前 45 维)
+    - 观测: 48 维 proprio(从 WMP 235 维 policy_obs 取前 48 维)
     - 地形: 与 PseudoReal 相同
     """
 
@@ -87,7 +87,9 @@ class InaccurateSimEnv(WMPEnvBase):
 
         # 外力推
         cfg.domain_rand.push_robots = dr.get('push_robots', True)
-        cfg.domain_rand.push_interval_s = dr.get('push_interval_s', [3.0, 8.0])
+        # WMP 期望 push_interval_s 是单个 float(不是 list)
+        push_interval_s = dr.get('push_interval_s', [3.0, 8.0])
+        cfg.domain_rand.push_interval_s = push_interval_s[0]  # 取第一个值
         cfg.domain_rand.push_force = dr.get('push_force', [10.0, 30.0])
         # WMP _push_robots 实际用的是 max_push_vel_xy(线速度扰动)
         cfg.domain_rand.max_push_vel_xy = dr.get('max_push_vel_xy', 1.0)
@@ -101,7 +103,7 @@ class InaccurateSimEnv(WMPEnvBase):
         cfg.domain_rand.com_pos_range = dr.get('com_pos_range', [-0.05, 0.05])
         cfg.domain_rand.randomize_restitution = dr.get('randomize_restitution', False)
         cfg.domain_rand.restitution_range = dr.get('restitution_range', [0.0, 1.0])
-        cfg.domain_rand.randomize_gains = dr.get('randomize_gains', False)  # WMP 字段
+        cfg.domain_rand.randomize_gains = dr.get('randomize_gains', False)
         cfg.domain_rand.damping_multiplier_range = dr.get('damping_multiplier_range', [0.5, 1.5])
         cfg.domain_rand.stiffness_multiplier_range = dr.get('stiffness_multiplier_range', [0.5, 1.5])
         cfg.domain_rand.randomize_link_mass = dr.get('randomize_link_mass', False)
@@ -123,7 +125,7 @@ class InaccurateSimEnv(WMPEnvBase):
             'push_robots': True,
             'push_interval_s': [3.0, 8.0],
             'push_force': [10.0, 30.0],
-            'max_push_vel_xy': 1.0,  # WMP 实际用的字段
+            'max_push_vel_xy': 1.0,
             'randomize_action_latency': False,
             'latency_range': [0.0, 0.0],
             # 补全的次要字段
