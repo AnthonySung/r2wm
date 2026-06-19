@@ -10,10 +10,13 @@ import yaml
 # 添加路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import torch
+# 关键:isaacgym 必须先 import(在 torch 之前)
+from isaacgym import gymapi  # noqa: F401
 
-from envs import InaccurateSimEnv
-from training.trainer import Trainer
+import torch  # noqa: E402
+
+from envs import InaccurateSimEnv  # noqa: E402
+from training.trainer import Trainer  # noqa: E402
 
 
 def load_config(path: str = 'configs/train.yaml') -> dict:

@@ -6,7 +6,8 @@ import os
 import sys
 import argparse
 import numpy as np
-import torch
+from isaacgym import gymapi  # noqa: F401
+import torch  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
