@@ -1,18 +1,19 @@
 # AMP (Adversarial Motion Priors) 配置
-# B1: 把 AMP reward 加到 WMP env step 输出
-# B2: 加 discriminator 训练
+# B2: 训 AMPDiscriminator + AMPNormalizer 更新
 
 amp:
-  # AMP reward 系数 (对齐 WMP A1AMPCfgPPO.amp_reward_coef)
-  # WMP: 0.5 * 0.02 = 0.01
-  # 我们用更大的值,因为我们的 task reward 范围只有 [0, 0.05]
-  reward_coef: 0.3
+  # AMP reward 系数
+  # WMP 原版: 0.5 * 0.02 = 0.01 (AMP:Task ≈ 1:3 ~ 1:5)
+  # r2wmp 第一次: 0.3 (AMP 占 80%,太重)
+  # 调整后: 0.05 (AMP 单步最大 0.05,跟 task reward 单步 0.02-0.05 同量级,AMP:Task ≈ 1:1 ~ 1:2)
+  reward_coef: 0.05
 
   # Discriminator hidden layer sizes (对齐 WMP)
   discr_hidden_dims: [1024, 512]
 
   # Task reward lerp (是否把 task reward 加到 AMP reward 上)
-  task_reward_lerp: 0.0   # 我们已经 task+AMP 加好了,不再 lerp
+  # WMP 用 0.0 (AMP 和 task 是分开的)
+  task_reward_lerp: 0.0
 
   # AMP motion files (WMP 的 mocap_motions 目录)
   # 用绝对路径(避免 WMP_ROOT 没设时找不到)
@@ -28,5 +29,25 @@ amp:
   # AMP normalizer (WMP 用 RunningMeanStd)
   use_normalizer: true
 
-  # Preload 多少 transition (B1 不训 discriminator,这里影响不大)
+  # Preload 多少 transition (B2 影响训练)
   num_preload_transitions: 100000
+
+  # AMP 训练超参 (B2 GAN-style)
+  training:
+    # Discriminator 训练频率(每 N 步训一次)
+    train_every: 1
+    # 每个 batch 里 policy amp_obs 数量
+    policy_batch_size: 4096
+    # 每个 batch 里 expert amp_obs 数量
+    expert_batch_size: 4096
+    # GAN 风格:expert→1, policy→-1
+    expert_target: 1.0
+    policy_target: -1.0
+    # Gradient penalty 系数 (WGAN-GP)
+    grad_pen_lambda: 10.0
+    # Discriminator 学习率
+    disc_lr: 1.0e-3
+    # Discriminator weight decay (WMP: 1e-4 trunk, 1e-2 head)
+    disc_weight_decay: 1.0e-4
+    # 是否更新 Normalizer
+    update_normalizer: true

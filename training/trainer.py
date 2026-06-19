@@ -12,6 +12,7 @@ from typing import Optional
 from .replay_buffer import ReplayBuffer
 from .wm_loss import compute_wm_loss, compute_residual_loss
 from .ac_loss import compute_ac_loss
+from .amp_trainer import compute_amp_loss
 from models.world_model import WorldModel
 from models.actor import A1Actor
 from models.critic import A1Critic, SlowCritic
@@ -75,6 +76,30 @@ class Trainer:
             eps=config['training']['adam_eps'],
         )
 
+        # AMP Discriminator + Optimizer (B2)
+        self.amp_enabled = getattr(self.env, '_use_amp', False)
+        if self.amp_enabled:
+            amp_cfg = self.env._amp_cfg
+            train_cfg = amp_cfg.get('training', {})
+            self._amp_train_cfg = train_cfg
+
+            # Discriminator optimizer (WMP 风格: trunk + head 分离 weight decay)
+            disc = self.env._amp_discriminator
+            self.amp_disc_opt = torch.optim.Adam([
+                {'params': disc.trunk.parameters(), 'weight_decay': train_cfg.get('disc_weight_decay', 1e-4)},
+                {'params': disc.amp_linear.parameters(), 'weight_decay': 1e-2},
+            ], lr=train_cfg.get('disc_lr', 1e-3))
+            print(f"[Trainer] AMP Discriminator optimizer created (lr={train_cfg.get('disc_lr', 1e-3)})")
+
+            # AMP obs buffer (训 discriminator 用)
+            self._amp_obs_buffer = []  # list of [N, amp_obs_dim]
+            self._amp_next_obs_buffer = []
+            self._amp_buffer_max = 8192
+        else:
+            self.amp_disc_opt = None
+            self._amp_obs_buffer = None
+            self._amp_next_obs_buffer = None
+
         # Replay buffer
         self.replay = ReplayBuffer(
             capacity=1_000_000,
@@ -101,7 +126,9 @@ class Trainer:
         print(f"[Stage 1] Starting training for {total_steps} steps")
         obs = self.env.reset()
         episode_returns = []
+        episode_lengths = []
         ep_return = torch.zeros(self.env.num_envs, device=self.device)
+        ep_len = torch.zeros(self.env.num_envs, device=self.device)
 
         # 维护 RSSM 状态(用于数据收集时的连续性)
         state = self.world_model.rssm.initial_state(self.env.num_envs, device=self.device)
@@ -148,6 +175,19 @@ class Trainer:
 
                 next_obs, reward, done, info = self.env.step(action)
                 ep_return += reward
+                ep_len += 1
+
+                # AMP: 收集 policy amp_obs 给 discriminator 训
+                if self.amp_enabled:
+                    next_amp_obs = self.env._wmp_env.get_amp_observations()
+                    current_amp_obs = self.env._current_amp_obs
+                    self._amp_obs_buffer.append(current_amp_obs.detach().clone())
+                    self._amp_next_obs_buffer.append(next_amp_obs.detach().clone())
+                    # 限制 buffer 大小
+                    if len(self._amp_obs_buffer) * self.env.num_envs > self._amp_buffer_max:
+                        keep = self._amp_buffer_max // self.env.num_envs
+                        self._amp_obs_buffer = self._amp_obs_buffer[-keep:]
+                        self._amp_next_obs_buffer = self._amp_next_obs_buffer[-keep:]
 
                 # 存储
                 obs_np = obs.cpu().numpy()
@@ -170,7 +210,9 @@ class Trainer:
                     for i in range(self.env.num_envs):
                         if done_idx[i]:
                             episode_returns.append(ep_return[i].item())
+                            episode_lengths.append(ep_len[i].item())
                             ep_return[i] = 0.0
+                            ep_len[i] = 0
 
                 # 更新 is_first, state, last_actions, deter_history
                 is_first_env = done.clone()
@@ -202,6 +244,48 @@ class Trainer:
                 )
                 self.wm_opt.step()
 
+            # 2.5 AMP Discriminator 训练 (B2, GAN-style + grad penalty)
+            if (self.amp_enabled
+                    and step > 100
+                    and step % self._amp_train_cfg.get('train_every', 1) == 0
+                    and len(self._amp_obs_buffer) > 0):
+                try:
+                    # 拼 buffer 成一个 batch
+                    policy_obs_cat = torch.cat(self._amp_obs_buffer, dim=0)
+                    policy_next_obs_cat = torch.cat(self._amp_next_obs_buffer, dim=0)
+                    # 限制 batch 大小
+                    max_batch = self._amp_train_cfg.get('policy_batch_size', 4096)
+                    if policy_obs_cat.shape[0] > max_batch:
+                        idx = torch.randperm(policy_obs_cat.shape[0])[:max_batch]
+                        policy_obs_cat = policy_obs_cat[idx]
+                        policy_next_obs_cat = policy_next_obs_cat[idx]
+
+                    amp_loss, amp_metrics = compute_amp_loss(
+                        discriminator=self.env._amp_discriminator,
+                        amp_loader=self.env._amp_loader,
+                        policy_amp_obs=policy_obs_cat,
+                        policy_next_amp_obs=policy_next_obs_cat,
+                        amp_normalizer=self.env._amp_normalizer,
+                        expert_target=self._amp_train_cfg.get('expert_target', 1.0),
+                        policy_target=self._amp_train_cfg.get('policy_target', -1.0),
+                        grad_pen_lambda=self._amp_train_cfg.get('grad_pen_lambda', 10.0),
+                        expert_batch_size=self._amp_train_cfg.get('expert_batch_size', 4096),
+                        device=self.device,
+                    )
+                    self._last_amp_metrics = amp_metrics
+                    self.amp_disc_opt.zero_grad()
+                    amp_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(
+                        self.env._amp_discriminator.parameters(),
+                        self.config['training']['grad_clip'],
+                    )
+                    self.amp_disc_opt.step()
+                except Exception as e:
+                    if step == 101:
+                        print(f"[Trainer] AMP train failed at step {step}: {e}")
+                        import traceback
+                        traceback.print_exc()
+
             # 3. AC 训练(每 20 步,Dreamer 标准: WM 1 次, AC ~5 次)
             if step > 100 and step % 20 == 0:
                 batch = self.replay.sample(
@@ -231,12 +315,15 @@ class Trainer:
             if step % log_every == 0 and step > 0:
                 elapsed = time.time() - start_time
                 avg_return = np.mean(episode_returns[-100:]) if episode_returns else 0.0
+                avg_ep_len = np.mean(episode_lengths[-100:]) if episode_lengths else 0.0
                 # 详情指标(用于诊断)
                 last_wm = getattr(self, '_last_wm_metrics', {})
                 last_ac = getattr(self, '_last_ac_metrics', {})
+                last_amp = getattr(self, '_last_amp_metrics', {})
                 print(
                     f"[Stage 1 Step {step}/{total_steps}] "
                     f"avg_return={avg_return:.2f} "
+                    f"avg_ep_len={avg_ep_len:.1f} "
                     f"elapsed={elapsed:.1f}s "
                     f"buffer_size={len(self.replay)} "
                     f"wm[kld]={last_wm.get('kl_loss', 0):.3f} "
@@ -244,7 +331,11 @@ class Trainer:
                     f"wm[rew]={last_wm.get('reward_loss', 0):.3f} "
                     f"ac[actor]={last_ac.get('actor_loss', 0):.3f} "
                     f"ac[critic]={last_ac.get('critic_loss', 0):.3f} "
-                    f"ac[lambda_ret]={last_ac.get('lambda_return_mean', 0):.3f}"
+                    f"ac[lambda_ret]={last_ac.get('lambda_return_mean', 0):.3f} "
+                    f"amp[loss]={last_amp.get('amp_loss', 0):.3f} "
+                    f"amp[exp_d]={last_amp.get('expert_d_mean', 0):.2f} "
+                    f"amp[pol_d]={last_amp.get('policy_d_mean', 0):.2f} "
+                    f"amp[gp]={last_amp.get('grad_pen_loss', 0):.3f}"
                 )
 
             # 5. 评估
