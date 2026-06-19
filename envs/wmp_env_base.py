@@ -86,6 +86,13 @@ class WMPEnvBase(BaseEnv):
             cfg, sim_params, gymapi.SIM_PHYSX, device, headless
         )
 
+        # 关键 hack: 把 rew_buf 改成 float dtype
+        # WMP bug: rew_buf 初始化为 int,bool 加法后变 bool
+        self._wmp_env.rew_buf = self._wmp_env.rew_buf.float()
+        # 同时把 episode_sums 也转 float(避免累加 bool)
+        for k in self._wmp_env.episode_sums:
+            self._wmp_env.episode_sums[k] = self._wmp_env.episode_sums[k].float()
+
         # 缓存
         self._phys_engine = gymapi.SIM_PHYSX
 
