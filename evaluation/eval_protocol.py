@@ -83,8 +83,15 @@ def evaluate_policy(
                 feat = world_model.rssm.get_feat(state)
                 action = actor.sample(feat)
 
-                # Env step
-                next_obs, reward, done, info = env.step(action.squeeze(0))
+                # Env step (action 需要是 [num_envs, ACTION_DIM])
+                # actor.sample(feat) 返回 shape 跟 feat 一致
+                # 如果 feat 是 [1, feat_dim] -> action 是 [1, 12],直接用
+                # 如果是 [12] -> unsqueeze 到 [1, 12]
+                if action.dim() == 1:
+                    action_2d = action.unsqueeze(0)
+                else:
+                    action_2d = action
+                next_obs, reward, done, info = env.step(action_2d)
 
                 if isinstance(next_obs, np.ndarray):
                     next_obs = torch.from_numpy(next_obs).float().to(device)

@@ -29,6 +29,7 @@ class PseudoRealEnv(WMPEnvBase):
         headless: bool = True,
         max_episode_steps: int = 1000,
         terrain_config: dict = None,
+        amp_config: dict = None,
     ):
         # 加载 WMP 配置
         try:
@@ -49,6 +50,7 @@ class PseudoRealEnv(WMPEnvBase):
             headless=headless,
             max_episode_steps=max_episode_steps,
             terrain_config=terrain_config,
+            amp_config=amp_config,  # B1
         )
 
         print(f"[PseudoRealEnv] Created: num_envs={num_envs}, "
