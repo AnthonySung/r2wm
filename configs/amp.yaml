@@ -1,0 +1,32 @@
+# AMP (Adversarial Motion Priors) 配置
+# B1: 把 AMP reward 加到 WMP env step 输出
+# B2: 加 discriminator 训练
+
+amp:
+  # AMP reward 系数 (对齐 WMP A1AMPCfgPPO.amp_reward_coef)
+  # WMP: 0.5 * 0.02 = 0.01
+  # 我们用更大的值,因为我们的 task reward 范围只有 [0, 0.05]
+  reward_coef: 0.3
+
+  # Discriminator hidden layer sizes (对齐 WMP)
+  discr_hidden_dims: [1024, 512]
+
+  # Task reward lerp (是否把 task reward 加到 AMP reward 上)
+  task_reward_lerp: 0.0   # 我们已经 task+AMP 加好了,不再 lerp
+
+  # AMP motion files (WMP 的 mocap_motions 目录)
+  # 用绝对路径(避免 WMP_ROOT 没设时找不到)
+  motion_files:
+    - '/home/WMP/datasets/mocap_motions/hop1.txt'
+    - '/home/WMP/datasets/mocap_motions/hop2.txt'
+    - '/home/WMP/datasets/mocap_motions/trot1.txt'
+    - '/home/WMP/datasets/mocap_motions/trot2.txt'
+
+  # AMP obs 时间步长 (WMP 默认 0.02s,policy dt)
+  time_between_frames: 0.02
+
+  # AMP normalizer (WMP 用 RunningMeanStd)
+  use_normalizer: true
+
+  # Preload 多少 transition (B1 不训 discriminator,这里影响不大)
+  num_preload_transitions: 100000

@@ -94,17 +94,15 @@ def compute_ac_loss(
         with_residual=False,  # ← 关键: Actor 训练在干净 latent
     )
 
-    # 3. 计算 rewards 和 values
-    # 简化: 这里假设有 reward_head(可以加一个)
-    # 为了简化,使用 heuristic reward(基于动作幅度)
-    imag_rewards = -0.01 * (actions ** 2).sum(dim=-1)  # [horizon, B]
+    # 3. 用 WM 的 reward_head 预测 reward(学自真实 env reward)
+    # 这样 AC 训练时 actor 能拿到"如果这样走能拿多少 reward"的信号
+    feat_seq = world_model.rssm.get_feat(states)  # [B, horizon, feat_dim]
+    imag_rewards = world_model.predict_reward(feat_seq)  # [B, horizon]
 
     # continues(假设 1.0 = 不终止)
     imag_continues = torch.ones_like(imag_rewards) * imag_cont
 
     # values
-    feat_seq = world_model.rssm.get_feat(states)  # [B, horizon, feat_dim]
-    feat_seq_t = feat_seq.transpose(0, 1)  # [horizon, B, feat_dim]
     values_flat = critic(feat_seq.reshape(-1, feat_seq.shape[-1]))  # [B*horizon]
     values_seq = values_flat.reshape(feat_seq.shape[0], feat_seq.shape[1]).transpose(0, 1)  # [horizon, B]
 

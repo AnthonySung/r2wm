@@ -78,6 +78,18 @@ class WorldModel(nn.Module):
             embed_dim=embed_dim,
         )
 
+        # Reward head: feat -> scalar reward prediction
+        # (Dreamer 风格,让 AC 训练用真实环境 reward 而不是 heuristic)
+        self.reward_head = nn.Sequential(
+            nn.Linear(self._stoch_flat_dim + deter_dim, hidden),
+            nn.LayerNorm(hidden),
+            nn.SiLU(),
+            nn.Linear(hidden, hidden),
+            nn.LayerNorm(hidden),
+            nn.SiLU(),
+            nn.Linear(hidden, 1),
+        )
+
         # Residual 模块
         if use_residual:
             self.physical_residual = make_physical_residual_for_stage1(
@@ -142,6 +154,21 @@ class WorldModel(nn.Module):
         """从 state 重建 obs"""
         feat = self.rssm.get_feat(state)
         return self.decoder(feat)
+
+    def predict_reward(self, feat_or_state) -> torch.Tensor:
+        """
+        从 feat 或 state dict 预测 reward (scalar).
+
+        Args:
+            feat_or_state: tensor [B, feat_dim] 或 state dict (with 'deter','stoch')
+        Returns:
+            reward: [B] (squeeze 到 1 维)
+        """
+        if isinstance(feat_or_state, dict):
+            feat = self.rssm.get_feat(feat_or_state)
+        else:
+            feat = feat_or_state
+        return self.reward_head(feat).squeeze(-1)
 
     def observe(
         self,

@@ -193,6 +193,7 @@ class Trainer:
                     self.world_model, batch,
                     free_bits=1.0,
                 )
+                self._last_wm_metrics = wm_metrics
                 self.wm_opt.zero_grad()
                 wm_loss.backward()
                 torch.nn.utils.clip_grad_norm_(
@@ -214,6 +215,7 @@ class Trainer:
                     init_action=batch['action'][:, 0],
                     horizon=self.config['training']['imag_horizon'],
                 )
+                self._last_ac_metrics = ac_metrics
                 self.ac_opt.zero_grad()
                 ac_loss.backward()
                 torch.nn.utils.clip_grad_norm_(
@@ -229,11 +231,20 @@ class Trainer:
             if step % log_every == 0 and step > 0:
                 elapsed = time.time() - start_time
                 avg_return = np.mean(episode_returns[-100:]) if episode_returns else 0.0
+                # 详情指标(用于诊断)
+                last_wm = getattr(self, '_last_wm_metrics', {})
+                last_ac = getattr(self, '_last_ac_metrics', {})
                 print(
                     f"[Stage 1 Step {step}/{total_steps}] "
                     f"avg_return={avg_return:.2f} "
                     f"elapsed={elapsed:.1f}s "
-                    f"buffer_size={len(self.replay)}"
+                    f"buffer_size={len(self.replay)} "
+                    f"wm[kld]={last_wm.get('kl_loss', 0):.3f} "
+                    f"wm[recon]={last_wm.get('recon_loss', 0):.3f} "
+                    f"wm[rew]={last_wm.get('reward_loss', 0):.3f} "
+                    f"ac[actor]={last_ac.get('actor_loss', 0):.3f} "
+                    f"ac[critic]={last_ac.get('critic_loss', 0):.3f} "
+                    f"ac[lambda_ret]={last_ac.get('lambda_return_mean', 0):.3f}"
                 )
 
             # 5. 评估

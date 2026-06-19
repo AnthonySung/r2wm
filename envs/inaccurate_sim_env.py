@@ -32,6 +32,8 @@ class InaccurateSimEnv(WMPEnvBase):
         max_episode_steps: int = 1000,
         terrain_config: dict = None,
         domain_rand_config: dict = None,
+        amp_config: dict = None,
+        amp_config_path: str = None,
     ):
         # 加载 WMP 配置
         try:
@@ -51,6 +53,14 @@ class InaccurateSimEnv(WMPEnvBase):
 
         self._domain_rand_config = domain_rand_config
 
+        # 加载 AMP 配置 (B1)
+        if amp_config is None and amp_config_path is not None:
+            import yaml
+            with open(amp_config_path, 'r', encoding='utf-8') as f:
+                full_cfg = yaml.safe_load(f)
+            amp_config = full_cfg.get('amp', None)
+        # amp_config 可能是 None,表示不用 AMP;WMPEnvBase 会优雅降级
+
         super().__init__(
             cfg=cfg,
             num_envs=num_envs,
@@ -58,11 +68,13 @@ class InaccurateSimEnv(WMPEnvBase):
             headless=headless,
             max_episode_steps=max_episode_steps,
             terrain_config=terrain_config,
+            amp_config=amp_config,
         )
 
         print(f"[InaccurateSimEnv] Created: num_envs={num_envs}, "
               f"motor_strength={domain_rand_config.get('motor_strength_range')}, "
-              f"Kp_range={domain_rand_config.get('kp_range')}")
+              f"Kp_range={domain_rand_config.get('kp_range')}, "
+              f"amp={'on' if self._use_amp else 'off'}")
 
     def _configure_domain_rand(self, cfg):
         """配置域随机化(关键!)"""

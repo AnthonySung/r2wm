@@ -61,12 +61,17 @@ def compute_wm_loss(
     recon_flat = recon.reshape(-1, recon.shape[-1])
     recon_loss = F.mse_loss(recon_flat, obs_flat)
 
-    # Reward prediction loss(简化)
+    # Reward prediction loss(Dreamer 风格: WM 学预测真实 env reward)
     if reward is not None and reward_scale > 0:
-        reward_flat = reward.reshape(-1)
-        # 简单 MLP 预测 reward(可选,这里简化)
-        # 实际实现: feat → reward_head → MSE(reward_pred, reward)
-        reward_loss = torch.tensor(0.0, device=obs.device)
+        # feat: [B, T, feat_dim] -> 预测 reward: [B, T]
+        reward_pred = world_model.predict_reward(feat)
+        reward_loss = F.mse_loss(reward_pred, reward)
+        # Debug: 看 reward 实际范围
+        if not hasattr(compute_wm_loss, '_debug_counter'):
+            compute_wm_loss._debug_counter = 0
+        compute_wm_loss._debug_counter += 1
+        if compute_wm_loss._debug_counter % 5 == 0:
+            print(f'[WM debug] reward_batch: min={reward.min().item():.4f} max={reward.max().item():.4f} mean={reward.mean().item():.4f} std={reward.std().item():.4f} | reward_pred: min={reward_pred.min().item():.4f} max={reward_pred.max().item():.4f}', flush=True)
     else:
         reward_loss = torch.tensor(0.0, device=obs.device)
 
@@ -78,6 +83,7 @@ def compute_wm_loss(
         'dyn_loss': dyn_loss.item(),
         'rep_loss': rep_loss.item(),
         'recon_loss': recon_loss.item(),
+        'reward_loss': reward_loss.item() if reward is not None else 0.0,
     }
 
     return total, metrics

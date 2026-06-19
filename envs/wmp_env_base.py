@@ -22,6 +22,15 @@ if WMP_ROOT not in sys.path:
     sys.path.insert(0, WMP_ROOT)
 
 
+# Lazy import WMP AMP modules(避免强制依赖)
+def _import_amp_modules():
+    """延迟导入 WMP 的 AMPDiscriminator / AMPLoader / Normalizer"""
+    from rsl_rl.algorithms.amp_discriminator import AMPDiscriminator
+    from rsl_rl.datasets.motion_loader import AMPLoader
+    from rsl_rl.utils.utils import Normalizer
+    return AMPDiscriminator, AMPLoader, Normalizer
+
+
 class WMPEnvBase(BaseEnv):
     """
     WMP LeggedRobot 的基类包装。
@@ -37,6 +46,7 @@ class WMPEnvBase(BaseEnv):
         headless: bool = True,
         max_episode_steps: int = 1000,
         terrain_config: dict = None,
+        amp_config: dict = None,
     ):
         super().__init__(
             num_envs=num_envs,
@@ -47,6 +57,7 @@ class WMPEnvBase(BaseEnv):
 
         self._cfg = cfg
         self._terrain_config = terrain_config or {}
+        self._amp_config = amp_config
 
         # 延迟导入 Isaac Gym 和 WMP
         try:
@@ -95,6 +106,116 @@ class WMPEnvBase(BaseEnv):
 
         # 缓存
         self._phys_engine = gymapi.SIM_PHYSX
+
+        # ============================================================
+        # AMP (Adversarial Motion Priors) 初始化 — B1
+        # ============================================================
+        self._init_amp(amp_config)
+
+    def _init_amp(self, amp_config):
+        """
+        初始化 AMP 模块(Discriminator + AMPLoader + Normalizer)
+
+        B1: 只是前向算 AMP reward,discriminator 不训(权重随机)
+        B2: 加 discriminator 训练
+        """
+        # 默认配置
+        default = {
+            'reward_coef': 0.3,
+            'discr_hidden_dims': [1024, 512],
+            'task_reward_lerp': 0.0,
+            # 用绝对路径(因为 WMP_ROOT 环境变量可能没设)
+            'motion_files': [
+                '/home/WMP/datasets/mocap_motions/hop1.txt',
+                '/home/WMP/datasets/mocap_motions/hop2.txt',
+                '/home/WMP/datasets/mocap_motions/trot1.txt',
+                '/home/WMP/datasets/mocap_motions/trot2.txt',
+            ],
+            'time_between_frames': 0.02,
+            'use_normalizer': True,
+            'num_preload_transitions': 100000,
+        }
+        if amp_config is None:
+            amp_config = default
+        else:
+            for k, v in default.items():
+                amp_config.setdefault(k, v)
+
+        # 如果 amp_config 是 dict 但缺字段,用 default 补
+        for k, v in default.items():
+            amp_config.setdefault(k, v)
+
+        self._amp_cfg = amp_config
+        self._use_amp = amp_config is not None
+
+        if not self._use_amp:
+            return
+
+        # 延迟 import (避免 WMP 没装时报错)
+        try:
+            AMPDiscriminator, AMPLoader, Normalizer = _import_amp_modules()
+        except ImportError as e:
+            print(f"[WMPEnvBase] AMP 模块 import 失败: {e}")
+            print(f"[WMPEnvBase] 降级到无 AMP 模式")
+            self._use_amp = False
+            return
+
+        # 1. AMPLoader: 读 mocap motion files
+        # 关键: motion_files 路径用相对于 WMP_ROOT
+        motion_files_full = []
+        for mf in amp_config['motion_files']:
+            if os.path.isabs(mf):
+                motion_files_full.append(mf)
+            else:
+                # 默认在 WMP_ROOT 下
+                motion_files_full.append(os.path.join(WMP_ROOT, mf))
+
+        if not motion_files_full or not all(os.path.exists(f) for f in motion_files_full):
+            print(f"[WMPEnvBase] AMP motion files 缺失,降级到无 AMP")
+            self._use_amp = False
+            return
+
+        try:
+            self._amp_loader = AMPLoader(
+                device=self._device,
+                time_between_frames=amp_config['time_between_frames'],
+                preload_transitions=True,
+                num_preload_transitions=amp_config['num_preload_transitions'],
+                motion_files=motion_files_full,
+            )
+            amp_obs_dim = self._amp_loader.observation_dim
+            print(f"[WMPEnvBase] AMPLoader OK: obs_dim={amp_obs_dim}, motion files={len(motion_files_full)}")
+        except Exception as e:
+            print(f"[WMPEnvBase] AMPLoader 创建失败: {e}")
+            self._use_amp = False
+            return
+
+        # 2. AMPDiscriminator
+        try:
+            self._amp_discriminator = AMPDiscriminator(
+                input_dim=amp_obs_dim * 2,  # cat [state, next_state]
+                amp_reward_coef=amp_config['reward_coef'],
+                hidden_layer_sizes=amp_config['discr_hidden_dims'],
+                device=self._device,
+                task_reward_lerp=amp_config['task_reward_lerp'],
+            )
+            self._amp_obs_dim = amp_obs_dim
+            print(f"[WMPEnvBase] AMPDiscriminator OK: reward_coef={amp_config['reward_coef']}, hidden={amp_config['discr_hidden_dims']}")
+        except Exception as e:
+            print(f"[WMPEnvBase] AMPDiscriminator 创建失败: {e}")
+            self._use_amp = False
+            return
+
+        # 3. AMPNormalizer (B2 会更新它,B1 暂时不用)
+        if amp_config['use_normalizer']:
+            self._amp_normalizer = Normalizer(amp_obs_dim)
+            # B1: 用初始 normalizer(uniform mean=0, var=1)
+            # B2: 在训练过程中 update
+        else:
+            self._amp_normalizer = None
+
+        # AMP obs 缓存 (current step 的 amp_obs,用于下一步的 reward 计算)
+        self._current_amp_obs = None
 
     # ============================================================
     # 子类必须实现的方法
@@ -178,6 +299,9 @@ class WMPEnvBase(BaseEnv):
         self._step_count = 0
         self._episode_returns.zero_()
         self._episode_lengths.zero_()
+        # AMP: 缓存当前 amp_obs (用于下一步的 reward 计算)
+        if self._use_amp:
+            self._current_amp_obs = self._wmp_env.get_amp_observations()
         return proprio
 
     def step(self, action: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict]:
@@ -194,6 +318,10 @@ class WMPEnvBase(BaseEnv):
         """
         action = self._check_action(action).to(self._device)
 
+        # AMP: 缓存当前 amp_obs (predict_amp_reward 需要 [state, next_state])
+        if self._use_amp:
+            current_amp_obs = self._current_amp_obs
+
         # 调用 WMP LeggedRobot.step()
         # 返回: (policy_obs, privileged_obs_buf, rew_buf, reset_buf, extras, reset_env_ids, terminal_amp_states)
         result = self._wmp_env.step(action)
@@ -201,9 +329,30 @@ class WMPEnvBase(BaseEnv):
             f"WMP LeggedRobot.step() 返回 {len(result)} 元组, 期望 7. "
             f"WMP 版本可能不兼容, 请检查 D:\\songay\\sim2real\\WMP\\legged_gym\\envs\\base\\legged_robot.py"
         )
-        policy_obs, _, reward, reset_buf, extras, _, _ = result
+        policy_obs, _, reward, reset_buf, extras, reset_env_ids, terminal_amp_states = result
 
         self._step_count += 1
+
+        # AMP: 算 AMP reward 并加到 task reward 上
+        if self._use_amp:
+            # next_amp_obs = step 后状态
+            next_amp_obs = self._wmp_env.get_amp_observations()
+            # 用 terminal_amp_states 替换已 reset env 的 next_amp_obs
+            # (WMP 标准做法,让 discriminator 知道 episode 真的结束了)
+            next_amp_obs_with_term = torch.clone(next_amp_obs)
+            if reset_env_ids is not None and len(reset_env_ids) > 0:
+                next_amp_obs_with_term[reset_env_ids] = terminal_amp_states
+
+            # 算 AMP reward (no_grad, eval mode)
+            with torch.no_grad():
+                amp_reward, _ = self._amp_discriminator.predict_amp_reward(
+                    current_amp_obs, next_amp_obs_with_term, reward,
+                    normalizer=self._amp_normalizer
+                )
+            # 合并: total reward = task + AMP
+            reward = reward + amp_reward
+            # 缓存 next amp_obs 给下一步用
+            self._current_amp_obs = next_amp_obs
 
         # 提取 proprio
         obs = self.get_proprio_obs_from_full(policy_obs)
