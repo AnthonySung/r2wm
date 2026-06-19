@@ -339,6 +339,7 @@ class Trainer:
 
     def save_checkpoint(self, filename: str):
         """保存完整 checkpoint"""
+        os.makedirs('checkpoints', exist_ok=True)
         path = os.path.join('checkpoints', filename)
         torch.save({
             'world_model': self.world_model.state_dict(),
@@ -362,6 +363,7 @@ class Trainer:
 
     def save_residual(self, filename: str):
         """只保存 Residual"""
+        os.makedirs('checkpoints', exist_ok=True)
         path = os.path.join('checkpoints', f'{filename}.ckpt')
         torch.save({
             'physical_residual': self.world_model.physical_residual.state_dict(),
