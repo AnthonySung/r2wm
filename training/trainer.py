@@ -12,9 +12,9 @@ from typing import Optional
 from .replay_buffer import ReplayBuffer
 from .wm_loss import compute_wm_loss, compute_residual_loss
 from .ac_loss import compute_ac_loss
-from ..models.world_model import WorldModel
-from ..models.actor import A1Actor
-from ..models.critic import A1Critic, SlowCritic
+from models.world_model import WorldModel
+from models.actor import A1Actor
+from models.critic import A1Critic, SlowCritic
 
 
 class Trainer:

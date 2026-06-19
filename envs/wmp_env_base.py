@@ -212,9 +212,8 @@ class WMPEnvBase(BaseEnv):
         # 计算 done(WMP 的 reset_buf 已经包含 terminate,timeout)
         done = reset_buf.clone()
 
-        # Episode 统计
-        # WMP bug: rew_buf 初始化为 int,bool 加法会变 bool dtype
-        # 这里转 float 避免下游报错
+        # 关键: 强制转 float 避免 dtype 错误
+        # WMP 的 _reward_termination 返回 bool,累加会污染 rew_buf dtype
         reward = reward.float()
 
         # Episode 统计
