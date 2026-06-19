@@ -1,0 +1,19 @@
+Importing module 'gym_38' (/home/WMP/isaacgym/python/isaacgym/_bindings/linux-x86_64/gym_38.so)
+Setting GYM_USD_PLUG_INFO_PATH to /home/WMP/isaacgym/python/isaacgym/_bindings/linux-x86_64/usd/plugInfo.json
+[Stage 1] AMP config loaded from configs/amp.yaml
+[AMP Loader] reward_coef=0.3, hidden=[1024, 512]
+[InaccurateSimEnv] Created: num_envs=4096, motor_strength=[0.65, 0.75], Kp_range=[14.0, 18.0], amp=on
+[Stage 1] Starting training for 1000 steps
+[Stage 1 Step 100/1000] avg_return=13.35 elapsed=9.3s buffer_size=413696 wm[kld]=0.000 wm[recon]=0.000 wm[rew]=0.000 ac[actor]=0.000 ac[critic]=0.000 ac[lambda_ret]=0.000
+[Stage 1 Step 200/1000] avg_return=16.74 elapsed=19.6s buffer_size=823296 wm[kld]=520.533 wm[recon]=0.310 wm[rew]=0.508 ac[actor]=-1.091 ac[critic]=4.174 ac[lambda_ret]=1.107
+[Stage 1 Step 300/1000] avg_return=24.47 elapsed=29.8s buffer_size=1000000 wm[kld]=447.431 wm[recon]=0.123 wm[rew]=0.096 ac[actor]=-3.563 ac[critic]=21.931 ac[lambda_ret]=3.617
+[Stage 1 Step 400/1000] avg_return=29.07 elapsed=40.6s buffer_size=1000000 wm[kld]=364.202 wm[recon]=0.082 wm[rew]=0.216 ac[actor]=-3.896 ac[critic]=19.805 ac[lambda_ret]=3.954
+[Stage 1 Step 500/1000] avg_return=31.80 elapsed=51.3s buffer_size=1000000 wm[kld]=318.929 wm[recon]=0.080 wm[rew]=0.208 ac[actor]=-3.211 ac[critic]=8.664 ac[lambda_ret]=3.260
+[WM debug] reward_batch: min=0.1803 max=0.3133 mean=0.2556 std=0.0149 | reward_pred: min=-0.6564 max=1.5702
+Loading extension module gymtorch...
+[Stage 1 Step 600/1000] avg_return=36.60 elapsed=63.5s buffer_size=1000000 wm[kld]=280.839 wm[recon]=0.072 wm[rew]=0.112 ac[actor]=-2.181 ac[critic]=1.691 ac[lambda_ret]=2.216
+[Stage 1 Step 700/1000] avg_return=31.42 elapsed=75.4s buffer_size=1000000 wm[kld]=247.382 wm[recon]=0.056 wm[rew]=0.067 ac[actor]=-1.281 ac[critic]=1.793 ac[lambda_ret]=1.303
+[Stage 1 Step 800/1000] avg_return=39.99 elapsed=87.2s buffer_size=1000000 wm[kld]=218.288 wm[recon]=0.041 wm[rew]=0.101 ac[actor]=-1.264 ac[critic]=2.365 ac[lambda_ret]=1.287
+[Stage 1 Step 900/1000] avg_return=64.92 elapsed=99.0s buffer_size=1000000 wm[kld]=192.173 wm[recon]=0.033 wm[rew]=0.110 ac[actor]=-1.930 ac[critic]=1.115 ac[lambda_ret]=1.964
+[Checkpoint] Saved to checkpoints/stage1_final.ckpt
+[Stage 1] Done. Saved stage1_final.ckpt
