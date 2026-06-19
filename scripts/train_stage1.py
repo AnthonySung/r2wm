@@ -40,7 +40,6 @@ def main():
         num_envs=args.num_envs,
         device=args.device,
         headless=args.headless,
-        config_path='configs/env_inaccurate_sim.yaml',
     )
 
     # 创建 Trainer
