@@ -99,8 +99,12 @@ def compute_amp_loss(
     }
 
     # 7. 更新 Normalizer (用 policy 和 expert 数据)
+    # 修复 Claude P0-3 (修正版): discriminator 输入是 cat([obs, next_obs]),
+    # 所以 normalizer 也要归一化这个拼接后的分布
     if amp_normalizer is not None:
-        amp_normalizer.update(policy_amp_obs.cpu().numpy())
-        amp_normalizer.update(expert_state.cpu().numpy())
+        policy_concat = torch.cat([policy_amp_obs, policy_next_amp_obs], dim=-1)
+        expert_concat = torch.cat([expert_state, expert_next_state], dim=-1)
+        amp_normalizer.update(policy_concat.cpu().numpy())
+        amp_normalizer.update(expert_concat.cpu().numpy())
 
     return total_loss, metrics

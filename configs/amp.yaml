@@ -35,7 +35,8 @@ amp:
   # AMP 训练超参 (B2 GAN-style)
   training:
     # Discriminator 训练频率(每 N 步训一次)
-    train_every: 1
+    # 默认 5(而不是 1): 防止 discriminator 早期 overfit 到噪声/慢速策略
+    train_every: 5
     # 每个 batch 里 policy amp_obs 数量
     policy_batch_size: 4096
     # 每个 batch 里 expert amp_obs 数量
@@ -49,5 +50,6 @@ amp:
     disc_lr: 1.0e-3
     # Discriminator weight decay (WMP: 1e-4 trunk, 1e-2 head)
     disc_weight_decay: 1.0e-4
+    disc_head_weight_decay: 1.0e-2
     # 是否更新 Normalizer
     update_normalizer: true

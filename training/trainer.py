@@ -87,7 +87,7 @@ class Trainer:
             disc = self.env._amp_discriminator
             self.amp_disc_opt = torch.optim.Adam([
                 {'params': disc.trunk.parameters(), 'weight_decay': train_cfg.get('disc_weight_decay', 1e-4)},
-                {'params': disc.amp_linear.parameters(), 'weight_decay': 1e-2},
+                {'params': disc.amp_linear.parameters(), 'weight_decay': train_cfg.get('disc_head_weight_decay', 1e-2)},
             ], lr=train_cfg.get('disc_lr', 1e-3))
             print(f"[Trainer] AMP Discriminator optimizer created (lr={train_cfg.get('disc_lr', 1e-3)})")
 
@@ -216,6 +216,14 @@ class Trainer:
 
                 # 更新 is_first, state, last_actions, deter_history
                 is_first_env = done.clone()
+                # Episode boundary 重置 last_actions 和 deter_history
+                # (修复 Claude P0-5: reset env 的 last_actions/deter_history 不能传过去)
+                if done.any():
+                    done_idx = done.cpu().numpy()
+                    for i in range(self.env.num_envs):
+                        if done_idx[i]:
+                            last_actions[i] = 0.0
+                            deter_history[i] = 0.0
                 # 更新 deter_history: shift left, append new_state.deter
                 deter_history = torch.cat([
                     deter_history[:, 1:, :],
